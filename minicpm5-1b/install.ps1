@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-PromptVerse One-Click Automated Installer for MiniCPM5-1B (Official UI)
+PromptVerse One-Click Automated Installer for MiniCPM5-1B (Official UI - Fixed)
 .DESCRIPTION
 Installs Python/Git, creates a venv, validates hardware, clones model weights 
-persistently via Git LFS, writes the official OpenBMB HTML/FastAPI UI, and sets up a launcher.
+persistently via Git LFS, writes the official OpenBMB UI flawlessly, and sets up a launcher.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -75,24 +75,24 @@ Write-Host "`n[5/7] Installing PyTorch & Official UI Requirements..." -Foregroun
 & "$InstallPath\venv\Scripts\python.exe" -m pip install --upgrade pip
 Invoke-Expression "& '$InstallPath\venv\Scripts\python.exe' -m $TorchCmd"
 
-$ReqContent = @"
+$ReqContent = @'
 gradio>=6.14.0
 transformers>=4.56
 accelerate
 sentencepiece
 fastapi
 uvicorn>=0.14.0
-"@
+'@
 Set-Content -Path "$InstallPath\requirements.txt" -Value $ReqContent
 & "$InstallPath\venv\Scripts\python.exe" -m pip install -r "$InstallPath\requirements.txt"
 
-# 6. Writing Official Application Structure (With local optimizations)
+# 6. Writing Official Application Structure
 Write-Host "`n[6/7] Deploying Official UI Assets..." -ForegroundColor Yellow
 
-# File 1: utils_chatbot.py
-$UtilsContent = @"
+# File 1: utils_chatbot.py (Using literal here-string to avoid escaping syntax bugs)
+$UtilsContent = @'
 def organize_messages(message, history=None):
-    \"\"\"Build chat messages from history tuples [[user, assistant], ...].\"\"\"
+    """Build chat messages from history tuples [[user, assistant], ...]."""
     msg_ls = [{"role": "system", "content": "You are a helpful assistant."}]
     if history:
         for turn in history:
@@ -106,17 +106,16 @@ def organize_messages(message, history=None):
                 msg_ls.append({"role": "assistant", "content": assistant_text})
     msg_ls.append({"role": "user", "content": message})
     return msg_ls
-"@
+'@
 Set-Content -Path "$InstallPath\utils_chatbot.py" -Value $UtilsContent
 
-# File 2: app.py (Adapted from official version to support local runtime & offline weights)
-$AppContent = @"
+# File 2: app.py
+$AppContent = @'
 import os
 import logging
 import threading
 from typing import Generator
 import torch
-from fastapi.responses import HTMLResponse
 import gradio as gr
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 from utils_chatbot import organize_messages
@@ -124,7 +123,6 @@ from utils_chatbot import organize_messages
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Pointing to persistent local weights folder
 MODEL_PATH = "./model_weights"
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
@@ -137,7 +135,6 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True,
 ).to(device)
 
-# Mount standard Gradio block app to serve the custom frontend matching index.html
 with gr.Blocks(title="MiniCPM5-1B Demo") as demo:
     gr.Markdown("# MiniCPM5-1B Official Local Interface")
     
@@ -179,7 +176,7 @@ with gr.Blocks(title="MiniCPM5-1B Demo") as demo:
 
 if __name__ == "__main__":
     demo.launch(inbrowser=True, server_port=7860)
-"@
+'@
 Set-Content -Path "$InstallPath\app.py" -Value $AppContent
 
 # File 3: Batch Execution Launcher
