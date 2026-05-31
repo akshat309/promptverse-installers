@@ -1,22 +1,25 @@
 <#
 .SYNOPSIS
-PromptVerse One-Click Automated Installer for MiniCPM5-1B (Official UI - Fixed)
+PromptVerse One-Click Automated Installer for MiniCPM5-1B (Official UI & Branded)
 .DESCRIPTION
 Installs Python/Git, creates a venv, validates hardware, clones model weights 
-persistently via Git LFS, writes the official OpenBMB UI flawlessly, and sets up a launcher.
+persistently via Git LFS, writes the official OpenBMB UI flawlessly, downloads 
+the custom PromptVerse branding icon, and sets up a customized launcher.
 #>
 
 $ErrorActionPreference = "Stop"
 $InstallPath = "C:\MiniCPM5-1B"
 $ModelUrl = "https://huggingface.co/openbmb/MiniCPM5-1B"
 $ShortcutPath = "$([Environment]::GetFolderPath('Desktop'))\MiniCPM5-1B PromptVerse.lnk"
+$IconUrl = "https://promptverse.fun/assets/pv-minicpm5-1b.ico"
+$IconLocalPath = "$InstallPath\pv-minicpm5-1b.ico"
 
 Write-Host "======================================================" -ForegroundColor Cyan
 Write-Host "   PROMPTVERSE: MINICPM5-1B OFFICIAL DEMO INSTALLER   " -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Cyan
 
 # 1. System Validation (RAM & VRAM)
-Write-Host "`n[1/7] Running System Validation..." -ForegroundColor Yellow
+Write-Host "`n[1/8] Running System Validation..." -ForegroundColor Yellow
 $TotalRAM = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
 Write-Host "System RAM: ${TotalRAM}GB detected."
 
@@ -41,7 +44,7 @@ try {
 }
 
 # 2. Environment Check (Python & Git)
-Write-Host "`n[2/7] Checking Git & Python..." -ForegroundColor Yellow
+Write-Host "`n[2/8] Checking Git & Python..." -ForegroundColor Yellow
 if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "Git not found. Installing via Winget..."
     winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
@@ -53,7 +56,7 @@ if (!(Get-Command python -ErrorAction SilentlyContinue)) {
 }
 
 # 3. Clone Model Weights Permanently via Git LFS
-Write-Host "`n[3/7] Initializing Git LFS and Downloading Model Weights (Persistent Local Storage)..." -ForegroundColor Yellow
+Write-Host "`n[3/8] Initializing Git LFS and Downloading Model Weights (Persistent Local Storage)..." -ForegroundColor Yellow
 if (!(Test-Path $InstallPath)) { New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null }
 Set-Location $InstallPath
 
@@ -67,11 +70,11 @@ if (!(Test-Path $ModelPath)) {
 }
 
 # 4. Virtual Environment Setup
-Write-Host "`n[4/7] Creating Python Virtual Environment..." -ForegroundColor Yellow
+Write-Host "`n[4/8] Creating Python Virtual Environment..." -ForegroundColor Yellow
 if (!(Test-Path "$InstallPath\venv")) { python -m venv venv }
 
 # 5. Installing Dependencies
-Write-Host "`n[5/7] Installing PyTorch & Official UI Requirements..." -ForegroundColor Yellow
+Write-Host "`n[5/8] Installing PyTorch & Official UI Requirements..." -ForegroundColor Yellow
 & "$InstallPath\venv\Scripts\python.exe" -m pip install --upgrade pip
 Invoke-Expression "& '$InstallPath\venv\Scripts\python.exe' -m $TorchCmd"
 
@@ -87,9 +90,9 @@ Set-Content -Path "$InstallPath\requirements.txt" -Value $ReqContent
 & "$InstallPath\venv\Scripts\python.exe" -m pip install -r "$InstallPath\requirements.txt"
 
 # 6. Writing Official Application Structure
-Write-Host "`n[6/7] Deploying Official UI Assets..." -ForegroundColor Yellow
+Write-Host "`n[6/8] Deploying Official UI Assets..." -ForegroundColor Yellow
 
-# File 1: utils_chatbot.py (Using literal here-string to avoid escaping syntax bugs)
+# File 1: utils_chatbot.py
 $UtilsContent = @'
 def organize_messages(message, history=None):
     """Build chat messages from history tuples [[user, assistant], ...]."""
@@ -191,16 +194,26 @@ pause
 "@
 Set-Content -Path "$InstallPath\start_webui.bat" -Value $BatContent
 
-# 7. Desktop Shortcut & Cleanup
-Write-Host "`n[7/7] Finalizing System Integration..." -ForegroundColor Yellow
+# 7. Download Branding Icon
+Write-Host "`n[7/8] Fetching Custom PromptVerse Branding..." -ForegroundColor Yellow
+try {
+    Invoke-WebRequest -Uri $IconUrl -OutFile $IconLocalPath -UseBasicParsing
+    Write-Host "Custom icon successfully downloaded." -ForegroundColor Green
+} catch {
+    Write-Host "Could not download icon, defaulting to standard terminal icon." -ForegroundColor Yellow
+    $IconLocalPath = "cmd.exe"
+}
+
+# 8. Desktop Shortcut & Cleanup
+Write-Host "`n[8/8] Finalizing System Integration..." -ForegroundColor Yellow
 $WshShell = New-Object -comObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = "$InstallPath\start_webui.bat"
 $Shortcut.WorkingDirectory = $InstallPath
-$Shortcut.IconLocation = "cmd.exe"
+$Shortcut.IconLocation = $IconLocalPath
 $Shortcut.Save()
 
 Write-Host "`n======================================================" -ForegroundColor Cyan
 Write-Host " PRODUCTION ARCHITECTURE DEPLOYED SUCCESSFULLY!" -ForegroundColor Green
-Write-Host " Weights are saved persistently. Run via your Desktop shortcut."
+Write-Host " Weights are saved persistently. Run via your newly branded Desktop shortcut."
 Write-Host "======================================================" -ForegroundColor Cyan
