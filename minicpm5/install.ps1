@@ -2,13 +2,14 @@
 .SYNOPSIS
 PromptVerse One-Click Automated Installer for MiniCPM5-1B
 .DESCRIPTION
-This script installs Python, Git, creates a virtual environment, detects CUDA/VRAM, 
-installs dependencies, downloads the MiniCPM5-1B model, and sets up a branded Gradio WebUI.
+Installs Python/Git, creates a venv, validates hardware, clones the MiniCPM repository, 
+downloads model weights persistently via Git LFS, and launches a Light-Themed LM Studio-style WebUI.
 #>
 
 $ErrorActionPreference = "Stop"
 $InstallPath = "C:\MiniCPM5-1B"
 $RepoUrl = "https://github.com/OpenBMB/MiniCPM.git"
+$ModelUrl = "https://huggingface.co/openbmb/MiniCPM5-1B"
 $ShortcutPath = "$([Environment]::GetFolderPath('Desktop'))\MiniCPM5-1B PromptVerse.lnk"
 
 Write-Host "======================================================" -ForegroundColor Cyan
@@ -16,7 +17,7 @@ Write-Host "   PROMPTVERSE: MINICPM5-1B ONE-CLICK INSTALLER       " -ForegroundC
 Write-Host "======================================================" -ForegroundColor Cyan
 
 # 1. System Validation (RAM & VRAM)
-Write-Host "`n[1/7] Running System Validation..." -ForegroundColor Yellow
+Write-Host "`n[1/8] Running System Validation..." -ForegroundColor Yellow
 $TotalRAM = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
 Write-Host "System RAM: ${TotalRAM}GB detected."
 if ($TotalRAM -lt 8) { Write-Host "WARNING: 8GB+ RAM recommended for smooth operation." -ForegroundColor Red }
@@ -28,9 +29,6 @@ try {
     if ($NvidiaSmi) {
         $VRAM = [math]::Round([int]$NvidiaSmi / 1024)
         Write-Host "GPU VRAM: ${VRAM}GB detected."
-        if ($VRAM -lt 4) { 
-            Write-Host "Low VRAM detected. Will enable 4-bit/8-bit quantization options in UI." -ForegroundColor Yellow 
-        }
         
         $CudaCheck = & nvidia-smi 2>$null | Select-String "CUDA Version: (\d+\.\d+)"
         if ($CudaCheck) {
@@ -45,7 +43,7 @@ try {
 }
 
 # 2. Environment Check (Python & Git)
-Write-Host "`n[2/7] Checking Git & Python..." -ForegroundColor Yellow
+Write-Host "`n[2/8] Checking Git & Python..." -ForegroundColor Yellow
 if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "Git not found. Installing via Winget..."
     winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
@@ -56,19 +54,29 @@ if (!(Get-Command python -ErrorAction SilentlyContinue)) {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
 
-# 3. Clone Repository
-Write-Host "`n[3/7] Setting up installation directory..." -ForegroundColor Yellow
-if (Test-Path $InstallPath) { Remove-Item -Recurse -Force $InstallPath }
-git clone $RepoUrl $InstallPath
+# 3. Clone Base Repository
+Write-Host "`n[3/8] Setting up installation directory..." -ForegroundColor Yellow
+if (!(Test-Path $InstallPath)) { New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null }
 Set-Location $InstallPath
+if (!(Test-Path "$InstallPath\.git")) { git clone $RepoUrl . }
 
-# 4. Virtual Environment Setup
-Write-Host "`n[4/7] Creating Python Virtual Environment..." -ForegroundColor Yellow
-python -m venv venv
+# 4. Clone Model Weights Permanently via Git LFS
+Write-Host "`n[4/8] Initializing Git LFS and Downloading Model Weights (This happens only once)..." -ForegroundColor Yellow
+& git lfs install
+$ModelPath = "$InstallPath\model_weights"
+if (!(Test-Path $ModelPath)) {
+    & git clone $ModelUrl $ModelPath
+} else {
+    Write-Host "Model weights already found locally. Skipping download." -ForegroundColor Green
+}
+
+# 5. Virtual Environment Setup
+Write-Host "`n[5/8] Creating Python Virtual Environment..." -ForegroundColor Yellow
+if (!(Test-Path "$InstallPath\venv")) { python -m venv venv }
 $ActivateCmd = "$InstallPath\venv\Scripts\activate.ps1"
 
-# 5. Installing Dependencies
-Write-Host "`n[5/7] Installing PyTorch & Dependencies (This may take a while)..." -ForegroundColor Yellow
+# 6. Installing Dependencies
+Write-Host "`n[6/8] Installing PyTorch & Dependencies (This may take a while)..." -ForegroundColor Yellow
 & "$InstallPath\venv\Scripts\python.exe" -m pip install --upgrade pip
 Invoke-Expression "& '$InstallPath\venv\Scripts\python.exe' -m $TorchCmd"
 
@@ -82,24 +90,36 @@ bitsandbytes
 Set-Content -Path "$InstallPath\requirements_webui.txt" -Value $ReqContent
 & "$InstallPath\venv\Scripts\python.exe" -m pip install -r "$InstallPath\requirements_webui.txt"
 
-# 6. Generate PromptVerse WebUI and Launcher
-Write-Host "`n[6/7] Generating PromptVerse Gradio UI..." -ForegroundColor Yellow
+# 7. Generate PromptVerse LM-Studio Style WebUI
+Write-Host "`n[7/8] Generating PromptVerse Gradio UI..." -ForegroundColor Yellow
 $AppContent = @"
+import os
 import gradio as gr
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 import torch
+from threading import Thread
 
-model_id = 'openbmb/MiniCPM5-1B'
-print(f'Loading {model_id} from Hugging Face...')
-tokenizer = AutoTokenizer.from_pretrained(model_id)
+# Force Light Mode for LM Studio feel
+os.environ["GRADIO_THEME"] = "light"
+
+model_path = './model_weights'
+print(f'Loading MiniCPM5-1B locally from {model_path}...')
+
+tokenizer = AutoTokenizer.from_pretrained(model_path)
 model = AutoModelForCausalLM.from_pretrained(
-    model_id,
+    model_path,
     torch_dtype='auto',
     device_map='auto'
 )
 
-def generate_text(prompt, think_mode):
-    messages = [{'role': 'user', 'content': prompt}]
+def generate_chat(message, history, think_mode):
+    messages = []
+    for user_msg, bot_msg in history:
+        messages.append({"role": "user", "content": user_msg})
+        messages.append({"role": "assistant", "content": bot_msg})
+    
+    messages.append({"role": "user", "content": message})
+    
     inputs = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
@@ -109,20 +129,50 @@ def generate_text(prompt, think_mode):
         return_tensors='pt'
     ).to(model.device)
     
-    outputs = model.generate(**inputs, max_new_tokens=512)
-    return tokenizer.decode(outputs[0][inputs['input_ids'].shape[-1]:], skip_special_tokens=True)
-
-with gr.Blocks(theme=gr.themes.Soft(primary_hue='cyan'), title='PromptVerse MiniCPM5-1B') as demo:
-    gr.Markdown('# 🌌 PromptVerse: MiniCPM5-1B Local UI')
-    with gr.Row():
-        with gr.Column(scale=2):
-            user_input = gr.Textbox(lines=4, placeholder='Enter your prompt here...', label='Input')
-            think_toggle = gr.Checkbox(label='Enable Hybrid Reasoning (<think> mode)', value=True)
-            submit_btn = gr.Button('Generate', variant='primary')
-        with gr.Column(scale=3):
-            output_box = gr.Textbox(lines=10, label='Model Output')
+    streamer = TextIteratorStreamer(tokenizer, timeout=10.0, skip_prompt=True, skip_special_tokens=True)
     
-    submit_btn.click(generate_text, inputs=[user_input, think_toggle], outputs=output_box)
+    generate_kwargs = dict(
+        **inputs,
+        streamer=streamer,
+        max_new_tokens=1024,
+        temperature=0.7 if not think_mode else 0.9,
+        top_p=0.95
+    )
+    
+    t = Thread(target=model.generate, kwargs=generate_kwargs)
+    t.start()
+    
+    partial_message = ""
+    for new_text in streamer:
+        partial_message += new_text
+        yield partial_message
+
+# Clean, monochrome theme mimicking native desktop apps
+custom_theme = gr.themes.Monochrome(
+    primary_hue="zinc",
+    secondary_hue="zinc",
+    neutral_hue="zinc",
+    font=[gr.themes.GoogleFont("Inter"), "ui-sans-serif", "system-ui", "sans-serif"]
+)
+
+with gr.Blocks(theme=custom_theme, title='PromptVerse MiniCPM5-1B') as demo:
+    with gr.Row():
+        with gr.Column(scale=1, min_width=300):
+            gr.Markdown("<h2 style='color: #111;'>🌌 PromptVerse</h2>")
+            gr.Markdown("**Model:** MiniCPM5-1B<br>**Status:** Loaded Locally (Offline)")
+            gr.Divider()
+            gr.Markdown("### ⚙️ Inference Settings")
+            think_toggle = gr.Checkbox(label='Enable <think> Reasoning Mode', value=True)
+            gr.Markdown("*When enabled, the model acts as a deliberate reasoner. Disable for faster, general chat.*")
+            
+        with gr.Column(scale=4):
+            gr.ChatInterface(
+                fn=generate_chat,
+                additional_inputs=[think_toggle],
+                chatbot=gr.Chatbot(height=650, show_copy_button=True, render_markdown=True),
+                textbox=gr.Textbox(placeholder="Send a message to MiniCPM5...", container=False, scale=7),
+                theme="light"
+            )
 
 if __name__ == '__main__':
     demo.launch(inbrowser=True)
@@ -140,8 +190,8 @@ pause
 "@
 Set-Content -Path "$InstallPath\start_webui.bat" -Value $BatContent
 
-# 7. Desktop Shortcut & Cleanup
-Write-Host "`n[7/7] Creating Desktop Shortcut and Cleaning Up..." -ForegroundColor Yellow
+# 8. Desktop Shortcut & Cleanup
+Write-Host "`n[8/8] Creating Desktop Shortcut..." -ForegroundColor Yellow
 $WshShell = New-Object -comObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = "$InstallPath\start_webui.bat"
@@ -151,5 +201,5 @@ $Shortcut.Save()
 
 Write-Host "`n======================================================" -ForegroundColor Cyan
 Write-Host " INSTALLATION COMPLETE!" -ForegroundColor Green
-Write-Host " A shortcut has been placed on your Desktop."
+Write-Host " The model is saved locally. A shortcut is on your Desktop."
 Write-Host "======================================================" -ForegroundColor Cyan
